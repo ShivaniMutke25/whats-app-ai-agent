@@ -212,6 +212,151 @@ This is effectively an event-driven domain model where customer messages and bus
 - Implementing message normalization, idempotency, and fallback modes.
 - Thinking in terms of both product value and operational readiness.
 
+## Response generation flow and AI orchestration
+
+### Step-by-step response generation process
+
+The AI service (`ai-service`) executes a 9-step pipeline before sending any response:
+
+**Step 1: Input Validation (Guardrails)**
+- `InputGuardrail.isValid()` checks message format and structure
+- `GuardrailService.isSafe()` detects harmful or out-of-scope intent
+- If validation fails, return safe fallback response immediately
+
+**Step 2: Load Conversation Memory (Redis)**
+- `ConversationMemoryService.load(customerId)` fetches from Redis key `whatsapp:conversation:{customerId}`
+- Retrieves last 6 conversation turns (alternating user/assistant messages)
+- Returns `List<ConversationTurn>` with role and content for context
+
+**Step 3: Retrieve Business Context (REST call to context-service)**
+- `BusinessContextService.buildBusinessContext(customerId, userMessage)` makes HTTP calls:
+  - `GET /customers/{customerId}` → customer profile (name, email, notes)
+  - `GET /inventory` → product list (name, SKU, quantity, price)
+- Aggregates response into a formatted string for the prompt
+- If context-service is down, includes error message without failing
+
+**Step 4: Retrieve RAG Documents (Policy knowledge base)**
+- `RagService.retrieve(userMessage)` performs keyword matching against business policies
+- Hardcoded documents include:
+  - "Refunds allowed within 30 days for unused items" (score 0.96)
+  - "Orders can be canceled before dispatch, not after" (score 0.9)
+  - "Delivery takes 3-5 business days" (score 0.88)
+- Returns matching documents with relevance scores
+
+**Step 5: Build Multi-part Prompt (Prompt assembly)**
+- `PromptService.buildPrompt()` combines:
+  1. System instruction
+  2. Business context (customer + inventory)
+  3. Conversation history
+  4. Retrieved RAG documents
+  5. Current customer message
+- Result is a rich, contextually grounded prompt
+
+**Step 6: Send to Chat Model (OpenAI via Spring AI)**
+- `SpringAiChatService.generateResponse(systemPrompt, userPrompt)`
+- Uses `ChatModel` from Spring AI framework
+- If `OPENAI_API_KEY` is missing, returns safe fallback: "Configure API key to enable AI replies"
+- Otherwise, calls OpenAI API with `SystemMessage` and `UserMessage`
+
+**Step 7: Normalize Response**
+- `StructuredResponseService.normalize(aiResponse, category)`
+- Trims whitespace, validates non-empty content
+- Returns `AgentResponse` with:
+  - `answer`: sanitized text response
+  - `category`: classification (ORDER, REFUND, GENERAL, etc.)
+  - `confidence`: relevance score (default 0.8)
+  - `requiresHumanSupport`: escalation flag
+
+**Step 8: Output Safety Check**
+- `OutputGuardrail.sanitize(normalizedAnswer)` performs final security scan
+- Removes any harmful patterns or injection attempts
+
+**Step 9: Persist and Deliver**
+- Save to Redis: `ConversationMemoryService.save(customerId, userMessage, assistantResponse)` with 1-hour TTL
+- Send via REST: `OutboundServiceClient.sendReply(phoneNumber, response)` to `outbound-service` endpoint `/internal/messages`
+
+### Service architecture and file organization
+
+All response generation logic lives in **ai-service** (port 8084):
+
+| Component | File | Key Responsibility |
+|-----------|------|---|
+| **AIOrchestrator** | Main orchestrator | Calls all services in sequence, implements the 9-step pipeline |
+| **PromptService** | Prompt assembly | Combines context, history, RAG docs, and customer message |
+| **SpringAiChatService** | LLM integration | Calls OpenAI API with fallback for missing credentials |
+| **StructuredResponseService** | Response normalization | Formats model output with category and confidence |
+| **OutputGuardrail** | Output validation | Final safety check before delivery |
+| **ConversationMemoryService** | Redis persistence | Loads/saves recent conversation history |
+| **BusinessContextService** | Context enrichment | HTTP calls to context-service for customer and inventory data |
+| **RagService** | Policy retrieval | Keyword-based matching against business knowledge base |
+| **GuardrailService** + **InputGuardrail** | Input validation | Detects harmful or invalid input |
+| **FallbackService** | Safety fallback | Returns safe responses when AI is unavailable |
+
+### RAG implementation
+
+**Current Implementation (Mock):**
+```
+RagService maintains hardcoded policy documents with relevance scores.
+When customer asks "Can I return?", keyword matcher finds "refund" → returns matched policy.
+```
+
+**How RAG documents are used:**
+1. `RagService.retrieve(userMessage)` is called in `AIOrchestrator`
+2. Returns `List<RetrievedDocument>` with content and relevance score
+3. Passed to `PromptService.buildPrompt()` which includes them as "Retrieved context"
+4. AI model uses these policies when answering questions
+
+**Production RAG pipeline (what you'd implement):**
+- Vector database (Pinecone, Weaviate, Milvus) instead of in-memory list
+- Embedding model to convert policies and questions to vectors
+- Semantic similarity search instead of keyword matching
+- Dynamic document management without code deployment
+
+### Inter-microservice communication
+
+Response generation requires HTTP calls across service boundaries:
+
+```
+ai-service (8084)
+    ├─→ HTTP GET /customers/{id}
+    │   └─→ context-service (8082)
+    │
+    ├─→ HTTP GET /inventory
+    │   └─→ context-service (8082)
+    │
+    └─→ HTTP POST /internal/messages
+        └─→ outbound-service (8083)
+```
+
+**Configuration via environment variables:**
+- `CONTEXT_SERVICE_URL`: `http://context-service:8082` (default for Docker)
+- `OUTBOUND_SERVICE_URL`: `http://outbound-service:8083` (default for Docker)
+
+This avoids hardcoding and enables flexible deployment across environments.
+
+### System-level prompts and constraints
+
+**System Prompt** (in `AIOrchestrator`):
+```
+"You are a retail support assistant for small shopkeepers.
+Answer clearly, reference business inventory and customer context,
+and do not hallucinate details."
+```
+
+**Additional instructions** (in `PromptService`):
+```
+"Use the available context and customer information when relevant.
+Do not invent policies or product availability.
+If the answer cannot be confirmed from available context, say so clearly
+and offer a safe alternative."
+```
+
+These constraints ensure the model:
+- Stays grounded in business facts
+- Uses provided context (inventory, customer history, policies)
+- Doesn't make up information
+- Falls back gracefully when uncertain
+
 ## Common interview questions and strong responses
 
 ### Q1: Why did you choose microservices for this project?
