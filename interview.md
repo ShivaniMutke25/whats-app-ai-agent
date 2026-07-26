@@ -83,22 +83,104 @@ The core product goals are:
 
 ## Architecture and design decisions
 
-### High-level design
+### Architecture flow diagram
 
-- Event-driven architecture with Kafka as the asynchronous boundary.
-- Clear separation of concerns across services.
-- Internal HTTP calls for context and outbound delivery to reduce coupling.
-- Independent deployments so services can scale without affecting the entire system.
+```text
+WhatsApp Cloud API
+      | webhook
+      v
+gateway-service (8081)
+      | normalize + deduplicate
+      v
+Kafka topic whatsapp.inbound
+      | consume
+      v
+ai-service (8084)
+      | load conversation history from Redis
+      | fetch customer/inventory context from context-service (8082)
+      | run AI prompt orchestration and guardrails
+      v
+outbound-service (8083)
+      | send WhatsApp reply or mock delivery
+      v
+WhatsApp Cloud API / local mock
+```
 
-### Low-level design
+### Why this technology stack?
 
-- `gateway-service` handles webhook handshake, normalization, and Kafka publishing.
-- `ai-service` uses a Kafka consumer group `whatsapp-ai-group` for resiliency.
-- Redis stores conversation context for follow-up messages and session continuity.
-- `context-service` provides business data for personalized AI responses.
-- `outbound-service` abstracts WhatsApp API delivery from the AI flow.
+- Kafka: chosen to decouple inbound webhook ingestion from AI processing and make the system resilient to spikes in message volume.
+- Redis: chosen for low-latency conversation state and short-lived memory storage, supporting follow-up chat continuity without heavy persistence.
+- Spring Boot / Java: provides fast service bootstrapping, validation, HTTP clients, and easy integration across multiple microservices.
+- Docker Compose: simplifies local setup for a multi-service system and mirrors the distributed runtime during development.
+- WhatsApp Cloud API: enables the product to live inside the customer channel where retail conversations already happen.
+- OpenAI / AI fallback logic: lets the bot answer free-form retail questions while still supporting safe local development without external keys.
 
-## Production readiness and scaling
+### How the design satisfies functional requirements
+
+Functional requirements:
+- Accept WhatsApp customer messages -> handled by `gateway-service` with webhook validation.
+- Normalize requests and deduplicate duplicates -> performed in `gateway-service` by `InboundMessageService` and `IdempotencyService`.
+- Maintain customer and inventory context -> served by `context-service` via `CustomerController` and `InventoryController`.
+- Keep conversation memory for follow-up questions -> implemented in `ConversationMemoryService` using Redis.
+- Generate AI responses for retail use cases -> implemented in `AIOrchestrator`, `PromptService`, and `SpringAiChatService`.
+- Deliver replies through WhatsApp -> done by `OutboundServiceClient` calling `outbound-service`.
+- Operate when external services are unavailable -> fallback logic in `FallbackService` and mock delivery in `MockWhatsAppClient`.
+
+### Why this LLD design?
+
+- The LLD separates data ingestion, business context, AI orchestration, and delivery, which is ideal for a retail bot product that may evolve into multiple conversation paths.
+- The `AIOrchestrator` can be extended with new tools and guardrails without changing webhook or delivery logic.
+- Using HTTP-based business context fetches keeps `ai-service` from needing direct database access to `context-service`, preserving service autonomy.
+- Conversation memory in Redis is the simplest persistent layer for chat continuity and avoids the complexity of a full session database in the first iteration.
+- The outbound service isolates external API retries, credential handling, and mock mode, making the AI layer testable and safe.
+
+## Entity relationships and code-based domain model
+
+The key entities emerge from the code:
+
+- `WhatsAppMessageEvent` (event) is the core transport unit between `gateway-service` and `ai-service`.
+- `WhatsAppMessage` maps an inbound customer message and carries `messageId`, `customerId`, `phoneNumber`, `message`, `timestamp`, and `correlationId`.
+- `CustomerProfile` represents shopkeeper customer data, including `customerId`, `name`, `email`, and `phoneNumber`.
+- `InventoryItem` represents shopkeeper products with `itemId`, `sku`, `name`, `description`, `quantity`, and `price`.
+
+Entity relationships in this system:
+- `WhatsAppMessageEvent` references a `customerId` and `phoneNumber`.
+- `CustomerProfile` is looked up by `customerId` in `BusinessContextService`.
+- `InventoryItem` data is read by `BusinessContextService` when the user asks about inventory.
+- `AIOrchestrator` binds the event input, conversation history, and business context to produce `AgentResponse`.
+
+This is effectively an event-driven domain model where customer messages and business data are linked by `customerId` and user intent rather than a traditional relational schema.
+
+## AI workflow and AI SDLC
+
+### AI workflow in the code
+
+1. `InboundMessageConsumer` receives `WhatsAppMessageEvent` from Kafka.
+2. It constructs a `WhatsAppMessage` domain object.
+3. `AIOrchestrator.process()` validates input and safety through `InputGuardrail` and `GuardrailService`.
+4. It loads recent conversation history from `ConversationMemoryService`.
+5. It fetches business context from `BusinessContextService`, which calls `context-service` endpoints.
+6. It builds a prompt via `PromptService` and may augment it with retrieved documents from `RagService`.
+7. It invokes `SpringAiChatService` to generate a response.
+8. `StructuredResponseService` normalizes the response and `OutputGuardrail` sanitizes it.
+9. The response is saved back to Redis conversation memory.
+10. `OutboundServiceClient` sends the reply to `outbound-service`, which delivers it to WhatsApp.
+
+### AI SDLC considerations
+
+- **Requirements**: Support retail order-taking, inventory queries, customer support, and delivery updates over WhatsApp.
+- **Design**: Defined a microservices boundary for AI orchestration separate from ingestion and delivery.
+- **Implementation**: Built guardrails, structured responses, and fallback flows to manage model safety and reliability.
+- **Testing**: Local mock mode plus health-check endpoints and service-specific tests allow verification without external dependencies.
+- **Deployment**: Docker Compose for local stack; environment variables isolate service URLs and credentials.
+- **Monitoring**: Planned metrics for Kafka lag, Redis usage, and outbound delivery success.
+
+### Why this approach is strong for system design interviews
+
+- It demonstrates awareness of service boundaries, coupling, and scalability.
+- It shows practical use of messaging for asynchronous workflow and retries.
+- It balances product functionality with operational concerns like mock modes, fallbacks, and incremental production readiness.
+- It provides a clear mapping from business requirements (orders, inventory, customers) to technical components.
 
 ### Production improvements already identified
 
@@ -215,6 +297,32 @@ This enables local development and demoing without requiring all external depend
 - Task: Build a reliable, maintainable architecture that connects webhook ingestion, product data, AI response generation, and outbound delivery.
 - Action: Implemented a microservices pipeline with Kafka for asynchronous flow, Redis for memory, and a separate outbound delivery service for WhatsApp integration.
 - Result: Delivered a flexible demo system that supports order-taking, inventory questions, and customer support workflows, with clear upgrade paths for production.
+
+## How to explain this on a whiteboard
+
+1. Start with the product problem:
+   - "Retail shopkeepers need a WhatsApp-based bot for orders, inventory checks, and customer support."
+2. Draw the main services:
+   - `gateway-service` for webhook ingestion
+   - `context-service` for customer and inventory data
+   - `ai-service` for chatbot orchestration
+   - `outbound-service` for message delivery
+3. Draw the message flow:
+   - Incoming WhatsApp webhook -> gateway -> Kafka -> AI -> outbound -> WhatsApp
+4. Annotate the cross-service interactions:
+   - `gateway-service` publishes `WhatsAppMessageEvent`
+   - `ai-service` loads conversation history from Redis
+   - `ai-service` calls `context-service` for business context
+   - `ai-service` sends replies to `outbound-service`
+5. Explain the technology choices briefly:
+   - Kafka for async decoupling and resiliency
+   - Redis for low-latency conversation state
+   - Spring Boot for service development and HTTP integration
+   - WhatsApp API because the product lives in the customer channel
+6. Highlight production concerns:
+   - durable idempotency, persistent context storage, tracing, and monitoring
+7. Close with impact:
+   - "This design lets shopkeepers automate sales and support while keeping the bot reliable and extensible."
 
 ## Final preparation checklist
 
