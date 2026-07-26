@@ -1,25 +1,29 @@
-# WhatsApp AI Agent — microservices
+# WhatsApp AI Agent microservices
 
-The monolith has been split into independently deployable Spring Boot services:
+This project implements a WhatsApp AI assistant using independently deployable Spring Boot services.
 
-- `gateway-service` (port 8081): validates WhatsApp webhooks and publishes `whatsapp.inbound` events.
-- `context-service` (port 8082): inventory and customer CRUD APIs.
-- `ai-service` (port 8084): consumes inbound events, uses Redis memory and context HTTP APIs, then requests delivery.
-- `outbound-service` (port 8083): sends WhatsApp replies or uses the local mock client.
-- `common`: shared event and API model library; it is not deployed.
+- `gateway-service` (port `8081`): validates WhatsApp webhooks and publishes normalized `whatsapp.inbound` events to Kafka.
+- `context-service` (port `8082`): provides customer, inventory, and shopkeeper APIs.
+- `ai-service` (port `8084`): consumes inbound events, uses Redis memory and context HTTP APIs, and requests delivery.
+- `outbound-service` (port `8083`): sends WhatsApp replies or uses a local mock client.
+- `common`: shared domain and transport model library; it is not deployed.
 
-## Run everything
+## Run the full stack locally
 
-1. Copy `.env.example` to `.env` and set credentials only when real AI/WhatsApp integration is needed.
-2. Start the stack:
+1. Copy `.env.example` to `.env`.
+2. Set credentials only when real AI or WhatsApp integration is needed.
+3. Start the stack:
 
 ```bash
 docker compose up --build
 ```
 
-Gateway is available at `http://localhost:8081`. Context APIs are at `http://localhost:8082`.
+Service endpoints:
 
-The stack works without `OPENAI_API_KEY`: AI service returns a safe configuration message and outbound is mocked by default.
+- Gateway webhook: `http://localhost:8081/whatsapp/webhook`
+- Context APIs: `http://localhost:8082`
+- Outbound service: `http://localhost:8083`
+- AI service: `http://localhost:8084`
 
 ## Build a single service
 
@@ -28,7 +32,7 @@ mvn -pl gateway-service -am package
 java -jar gateway-service/target/gateway-service-*.jar
 ```
 
-Use the matching module name for `context-service`, `ai-service`, or `outbound-service`.
+Replace `gateway-service` with `context-service`, `ai-service`, or `outbound-service` as required.
 
 ## Key configuration
 
@@ -39,6 +43,7 @@ Use the matching module name for `context-service`, `ai-service`, or `outbound-s
 | `CONTEXT_SERVICE_URL` | AI | `http://context-service:8082` |
 | `OUTBOUND_SERVICE_URL` | AI | `http://outbound-service:8083` |
 | `OPENAI_API_KEY` | AI | empty (safe fallback) |
-| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | outbound | empty (mock) |
+| `WHATSAPP_ACCESS_TOKEN` | outbound | empty (mock) |
+| `WHATSAPP_PHONE_NUMBER_ID` | outbound | empty (mock) |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) and [TESTING.md](TESTING.md) for interfaces and verification.
+For architecture details, usage examples, and verification steps, see [ARCHITECTURE.md](ARCHITECTURE.md), [USAGE.md](USAGE.md), and [TESTING.md](TESTING.md).

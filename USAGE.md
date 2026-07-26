@@ -2,28 +2,34 @@
 
 ## Quick Start
 
-### Start dependencies locally
+### Start locally with Docker Compose
 
 ```bash
-cd /workspaces/whats-app-ai-agent
-docker-compose up -d
+docker compose up --build -d
 ```
 
-### Run the application
+The service ports exposed on localhost are:
+
+- Gateway webhook: `http://localhost:8081`
+- Context service: `http://localhost:8082`
+- Outbound service: `http://localhost:8083`
+- AI service: `http://localhost:8084`
+
+### Run a single service locally with Maven
 
 ```bash
-mvn clean package
-mvn spring-boot:run
+mvn -pl gateway-service -am package
+java -jar gateway-service/target/gateway-service-*.jar
 ```
 
-The service will start at `http://localhost:8080` by default.
+Replace `gateway-service` with `context-service`, `ai-service`, or `outbound-service` as needed.
 
 ## Verify Webhook Endpoint
 
-Use this command to verify the webhook URL with WhatsApp Cloud-style verification parameters:
+Use this command against `gateway-service`:
 
 ```bash
-curl "http://localhost:8080/whatsapp/webhook?hub.mode=subscribe&hub.challenge=CHALLENGE_TOKEN&hub.verify_token=local-verify-token"
+curl "http://localhost:8081/whatsapp/webhook?hub.mode=subscribe&hub.challenge=CHALLENGE_TOKEN&hub.verify_token=local-verify-token"
 ```
 
 A successful response returns the challenge token.
@@ -63,54 +69,53 @@ Save the following JSON to `whatsapp-webhook-sample.json`:
 }
 ```
 
-Send it to the running app:
+Send it to the gateway:
 
 ```bash
-curl -X POST http://localhost:8080/whatsapp/webhook \
+curl -X POST http://localhost:8081/whatsapp/webhook \
   -H "Content-Type: application/json" \
   -d @whatsapp-webhook-sample.json
 ```
 
-The endpoint will normalize the inbound message, publish it to Kafka, and return an accepted response.
+The gateway normalizes the inbound message, publishes it to Kafka, and returns an accepted response.
 
-## Inspect Shopkeeper Data
+## Inspect Context Service Data
 
 Check inventory:
 
 ```bash
-curl http://localhost:8080/inventory
+curl http://localhost:8082/inventory
 ```
 
 Check customers:
 
 ```bash
-curl http://localhost:8080/customers
+curl http://localhost:8082/customers
 ```
 
 Check shopkeeper overview endpoints:
 
 ```bash
-curl http://localhost:8080/shopkeeper/inventory
-curl http://localhost:8080/shopkeeper/customers
+curl http://localhost:8082/shopkeeper/inventory
+curl http://localhost:8082/shopkeeper/customers
 ```
 
 ## Production Testing
 
 ### Required production environment variables
 
-- `KAFKA_BOOTSTRAP_SERVERS` - Kafka brokers
-- `REDIS_HOST` - Redis host
-- `REDIS_PORT` - Redis port
-- `OPENAI_API_KEY` - OpenAI API key
-- `OPENAI_MODEL` - Model to use (e.g. `gpt-4o-mini`)
-- `WHATSAPP_ACCESS_TOKEN` - WhatsApp Cloud API bearer token
-- `WHATSAPP_PHONE_NUMBER_ID` - WhatsApp Phone Number ID
-- `WHATSAPP_API_BASE_URL` - WhatsApp base URL (default: `https://graph.facebook.com/v20.0`)
+- `KAFKA_BOOTSTRAP_SERVERS` — Kafka brokers
+- `REDIS_HOST` — Redis host
+- `REDIS_PORT` — Redis port
+- `OPENAI_API_KEY` — OpenAI API key
+- `OPENAI_MODEL` — Model to use (for example `gpt-4o-mini`)
+- `WHATSAPP_ACCESS_TOKEN` — WhatsApp Cloud API bearer token
+- `WHATSAPP_PHONE_NUMBER_ID` — WhatsApp Phone Number ID
+- `WHATSAPP_API_BASE_URL` — WhatsApp base URL (default: `https://graph.facebook.com/v20.0`)
 
 ### Start in production mode
 
-Use a production-ready process manager or container runtime to start the app.
-For example:
+Use a process manager or container runtime to launch the required services. Example:
 
 ```bash
 OPENAI_API_KEY=your_key \
@@ -119,65 +124,53 @@ WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id \
 KAFKA_BOOTSTRAP_SERVERS=kafka-host:9092 \
 REDIS_HOST=redis-host \
 REDIS_PORT=6379 \
-java -jar target/whatsapp-ai-agent-0.0.1-SNAPSHOT.jar
+java -jar ai-service/target/ai-service-*.jar
 ```
 
 ### Production smoke test
 
-1. Confirm the app is healthy:
+1. Confirm the gateway is reachable:
 
 ```bash
-curl http://localhost:8080/actuator/health
+curl "http://localhost:8081/whatsapp/webhook?hub.mode=subscribe&hub.challenge=CHALLENGE_TOKEN&hub.verify_token=local-verify-token"
 ```
 
-2. Confirm the webhook endpoint is reachable:
+2. Confirm the context service is online:
 
 ```bash
-curl "http://localhost:8080/whatsapp/webhook?hub.mode=subscribe&hub.challenge=CHALLENGE_TOKEN&hub.verify_token=local-verify-token"
+curl http://localhost:8082/inventory
 ```
 
-3. Send a real or test WhatsApp webhook payload to `/whatsapp/webhook`.
-4. Monitor logs for Kafka publish/consume activity and Spring AI invocation.
-5. Verify outbound replies are sent by the WhatsApp Cloud API.
+3. Send a valid WhatsApp webhook payload to `http://localhost:8081/whatsapp/webhook`.
+4. Monitor logs for Kafka publish/consume activity and AI orchestration.
+5. Verify outbound replies are sent by WhatsApp Cloud API or observed in mock mode.
 
 ## Production Notes
 
-- The app uses Kafka for asynchronous processing.
-- Redis stores the recent conversation history for each customer.
-- If `WHATSAPP_ACCESS_TOKEN` or `WHATSAPP_PHONE_NUMBER_ID` is missing, outgoing replies fall back to a mock client.
-- For real WhatsApp message delivery, both credentials must be provided.
-- The current idempotency service is in-memory; for production, a durable Redis or database-backed idempotency layer is recommended.
+- Kafka is used for asynchronous inbound message delivery.
+- Redis stores recent conversation history for the AI service.
+- If `WHATSAPP_ACCESS_TOKEN` or `WHATSAPP_PHONE_NUMBER_ID` is missing, outbound delivery uses mock mode.
+- For real WhatsApp delivery, provide both credentials.
+- Durable idempotency and a persistent database for context data are recommended for production.
 
 ## Debugging
 
-- Check `docker-compose logs kafka` and `docker-compose logs redis` when running locally.
-- Confirm Kafka broker connectivity with `KAFKA_BOOTSTRAP_SERVERS`.
-- Confirm Redis connectivity with `REDIS_HOST` and `REDIS_PORT`.
-- Validate `OPENAI_API_KEY` and `WHATSAPP_ACCESS_TOKEN` are set when using real external services.
+- Use `docker compose logs kafka` and `docker compose logs redis` when running locally.
+- Check connectivity for `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`, and `REDIS_PORT`.
+- Validate `OPENAI_API_KEY` and `WHATSAPP_ACCESS_TOKEN` when using real external services.
 
 ## Real WhatsApp Cloud Integration
 
-Once the app is receiving real webhook events and has valid credentials, it will attempt to send outbound replies using `WhatsAppCloudClient`.
+With valid credentials, the app forwards outbound messages through the WhatsApp Cloud API.
 
 Important:
-- Provide a valid access token and phone number ID.
-- Use the WhatsApp Cloud API base URL if required by your environment.
-- Confirm the `phone_number_id` field in incoming webhooks matches the `WHATSAPP_PHONE_NUMBER_ID` used for outbound sending.
-
-## Sample Production `curl` Payload
-
-Use the same sample payload as above, but ensure the `from` phone number is formatted correctly for your WhatsApp test user and the `id` value is unique.
-
-```bash
-curl -X POST https://your.production.host/whatsapp/webhook \
-  -H "Content-Type: application/json" \
-  -d @whatsapp-webhook-sample.json
-```
+- Set a valid access token and phone number ID.
+- Ensure the incoming webhook `phone_number_id` matches the configured `WHATSAPP_PHONE_NUMBER_ID`.
+- Confirm that webhook requests are routed to `gateway-service` on port `8081`.
 
 ## What to Expect
 
-- The webhook call returns `accepted` if message normalization and publishing succeed.
-- The Kafka consumer processes the event asynchronously.
-- AI orchestration builds a prompt, calls OpenAI, and stores history in Redis.
-- The reply is sent through WhatsApp if outbound credentials are configured.
-- If credentials are missing, the message is not delivered but the flow still executes for local/dev testing.
+- The gateway returns `accepted` when inbound normalization and Kafka publishing succeed.
+- The AI service consumes the event asynchronously.
+- AI orchestration constructs a prompt, calls the model or fallback path, and stores history in Redis.
+- Outbound replies are delivered through WhatsApp if configured, otherwise mocked for local testing.
