@@ -3,6 +3,9 @@ spring:
     name: whatsapp-ai-agent
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
 
 server:
   port: 8080
@@ -35,3 +38,15 @@ app:
       access-token: ${WHATSAPP_ACCESS_TOKEN:}
     phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
     mock-mode: ${WHATSAPP_MOCK_MODE:true}
+
+spring:
+  ai:
+    model:
+      chat: org.springframework.ai.openai.OpenAiChatModel
+    openai:
+      chat:
+        api-key: ${SPRING_AI_OPENAI_CHAT_API_KEY:${OPENAI_API_KEY:}}
+        base-url: ${SPRING_AI_OPENAI_CHAT_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com/v1}}
+        options:
+          model: ${SPRING_AI_OPENAI_CHAT_MODEL:${OPENAI_MODEL:gpt-4o-mini}}
+          temperature: ${SPRING_AI_OPENAI_CHAT_TEMPERATURE:${OPENAI_TEMPERATURE:0.2}}

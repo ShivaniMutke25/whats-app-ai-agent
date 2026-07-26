@@ -9,11 +9,16 @@ import java.util.List;
 @Service
 public class PromptService {
 
-    public String buildPrompt(String customerMessage, List<ConversationTurn> history, List<RetrievedDocument> retrievedDocuments) {
+    public String buildPrompt(String customerMessage, List<ConversationTurn> history, List<RetrievedDocument> retrievedDocuments, String businessContext) {
         StringBuilder builder = new StringBuilder();
-        builder.append("You are a helpful support assistant for a WhatsApp customer service prototype.\n");
-        builder.append("Use the retrieved context when it is relevant. Do not invent policies.\n");
-        builder.append("If the answer cannot be confirmed from the available context, say so clearly.\n\n");
+        builder.append("You are a helpful support assistant for a WhatsApp customer service prototype serving small shopkeepers.\n");
+        builder.append("Use the available context and customer information when it is relevant. Do not invent policies or product availability.\n");
+        builder.append("If the answer cannot be confirmed from the available context, say so clearly and offer a safe alternative.\n\n");
+
+        if (businessContext != null && !businessContext.isBlank()) {
+            builder.append("Business context:\n");
+            builder.append(businessContext).append("\n\n");
+        }
 
         if (!history.isEmpty()) {
             builder.append("Conversation history:\n");

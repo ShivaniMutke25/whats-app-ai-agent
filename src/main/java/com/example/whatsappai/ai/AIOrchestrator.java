@@ -16,11 +16,13 @@ import org.springframework.stereotype.Service;
 public class AIOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(AIOrchestrator.class);
+    private static final String SYSTEM_PROMPT = "You are a retail support assistant for small shopkeepers. Answer clearly, reference business inventory and customer context, and do not hallucinate details.";
 
     private final PromptService promptService;
     private final ConversationMemoryService conversationMemoryService;
     private final RagService ragService;
-    private final OpenAiClient openAiClient;
+    private final SpringAiChatService springAiChatService;
+    private final BusinessContextService businessContextService;
     private final OrderStatusTool orderStatusTool;
     private final GuardrailService guardrailService;
     private final InputGuardrail inputGuardrail;
@@ -31,7 +33,8 @@ public class AIOrchestrator {
     public AIOrchestrator(PromptService promptService,
                           ConversationMemoryService conversationMemoryService,
                           RagService ragService,
-                          OpenAiClient openAiClient,
+                          SpringAiChatService springAiChatService,
+                          BusinessContextService businessContextService,
                           OrderStatusTool orderStatusTool,
                           GuardrailService guardrailService,
                           InputGuardrail inputGuardrail,
@@ -41,7 +44,8 @@ public class AIOrchestrator {
         this.promptService = promptService;
         this.conversationMemoryService = conversationMemoryService;
         this.ragService = ragService;
-        this.openAiClient = openAiClient;
+        this.springAiChatService = springAiChatService;
+        this.businessContextService = businessContextService;
         this.orderStatusTool = orderStatusTool;
         this.guardrailService = guardrailService;
         this.inputGuardrail = inputGuardrail;
@@ -57,15 +61,16 @@ public class AIOrchestrator {
 
         var history = conversationMemoryService.load(message.customerId());
         var retrievedDocuments = ragService.retrieve(message.message());
-        var prompt = promptService.buildPrompt(message.message(), history, retrievedDocuments);
+        var businessContext = businessContextService.buildBusinessContext(message.customerId(), message.message());
+        var prompt = promptService.buildPrompt(message.message(), history, retrievedDocuments, businessContext);
 
         if (message.message().toLowerCase().contains("order") && message.message().toLowerCase().contains("123")) {
             var toolResult = orderStatusTool.getStatus("ORD-123");
             log.info("Tool result for order lookup: {}", toolResult);
         }
 
-        var response = openAiClient.generateResponse(prompt);
-        var structuredResponse = structuredResponseService.normalize(response.answer(), response.category());
+        var rawResponse = springAiChatService.generateResponse(SYSTEM_PROMPT, prompt);
+        var structuredResponse = structuredResponseService.normalize(rawResponse, "GENERAL");
         var safeAnswer = outputGuardrail.sanitize(structuredResponse.answer());
         var safeResponse = new AgentResponse(safeAnswer, structuredResponse.category(), structuredResponse.confidence(), structuredResponse.requiresHumanSupport());
         conversationMemoryService.save(message.customerId(), message.message(), safeResponse.answer());
