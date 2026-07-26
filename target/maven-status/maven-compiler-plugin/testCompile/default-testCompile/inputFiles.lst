@@ -1,0 +1,10 @@
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/WhatsAppAiAgentApplicationTests.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/ai/ContextBuilderTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/ai/EvaluationServiceTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/controller/WebhookControllerTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/guardrail/GuardrailServiceTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/kafka/InboundMessageFlowTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/service/FallbackServiceTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/service/IdempotencyServiceTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/service/RateLimitServiceTest.java
+/workspaces/whats-app-ai-agent/src/test/java/com/example/whatsappai/service/WhatsAppResponseServiceTest.java
