@@ -1,0 +1,11 @@
+server:
+  port: 8083
+spring:
+  application:
+    name: outbound-service
+app:
+  whatsapp:
+    api:
+      base-url: ${WHATSAPP_API_BASE_URL:https://graph.facebook.com/v20.0}
+      access-token: ${WHATSAPP_ACCESS_TOKEN:}
+    phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}

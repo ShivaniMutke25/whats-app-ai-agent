@@ -1,0 +1,11 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: gateway-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+app:
+  kafka:
+    topic:
+      inbound: ${KAFKA_INBOUND_TOPIC:whatsapp.inbound}

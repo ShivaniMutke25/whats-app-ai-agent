@@ -1,0 +1,31 @@
+server:
+  port: 8084
+spring:
+  application:
+    name: ai-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:whatsapp-ai-group}
+      properties:
+        spring.json.trusted.packages: com.example.whatsappai.kafka
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}
+app:
+  kafka:
+    topic:
+      inbound: ${KAFKA_INBOUND_TOPIC:whatsapp.inbound}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:whatsapp-ai-group}
+  context-service:
+    base-url: ${CONTEXT_SERVICE_URL:http://context-service:8082}
+  outbound-service:
+    base-url: ${OUTBOUND_SERVICE_URL:http://outbound-service:8083}
