@@ -115,6 +115,111 @@ WhatsApp Cloud API / local mock
 - WhatsApp Cloud API: enables the product to live inside the customer channel where retail conversations already happen.
 - OpenAI / AI fallback logic: lets the bot answer free-form retail questions while still supporting safe local development without external keys.
 
+### Webhook technology and design
+
+**What is a webhook?**
+
+A webhook is a callback mechanism—a reverse API call where WhatsApp pushes events to your app instead of your app constantly asking "Do you have new messages?"
+
+```
+Traditional:  Your app polls → "Any new messages?" ← WhatsApp (every 5 seconds, wasteful)
+Webhook:      WhatsApp → (HTTP POST) → Your app (real-time, when message arrives)
+```
+
+**How webhooks work in this project:**
+
+1. **Registration**: WhatsApp is configured to send messages to `http://localhost:8081/whatsapp/webhook`
+2. **Verification**: WhatsApp sends a GET request with a challenge token to verify ownership
+3. **Inbound flow**: When customer sends message, WhatsApp POSTs the message payload to your webhook
+4. **Processing**: `WebhookController.handleWebhook()` receives, normalizes, and publishes to Kafka
+5. **Response**: Return 202 Accepted immediately; don't wait for AI to process
+
+```
+WhatsApp Cloud API
+      | POST /whatsapp/webhook
+      v
+gateway-service (WebhookController)
+      | normalize + deduplicate
+      | publish event
+      v
+Kafka topic whatsapp.inbound
+      | async consume
+      v
+ai-service (InboundMessageConsumer)
+      | generate response
+      v
+outbound-service
+      | send reply
+      v
+WhatsApp Cloud API
+```
+
+**Why webhooks instead of polling?**
+
+| Criteria | Polling | Long Polling | WebSockets | Webhooks |
+|----------|---------|--------------|-----------|----------|
+| Real-time latency | ❌ 5-60s | ⚠ ~5s | ✅ <100ms | ✅ <100ms |
+| Resource efficient | ❌ Wasteful | ⚠ Moderate | ✅ Good | ✅ Excellent |
+| Scalability | ❌ Poor | ⚠ Moderate | ⚠ Hard | ✅ Excellent |
+| Implementation | ✅ Simple | ⚠ Medium | ❌ Complex | ✅ Simple |
+| WhatsApp support | ❌ None | ❌ None | ❌ None | ✅ Official |
+
+**Polling alternative (what we avoided):**
+```java
+@Scheduled(fixedDelay = 5000)  // Every 5 seconds
+public void pollMessages() {
+    List<Message> newMessages = whatsappApi.getMessages();
+    for (Message msg : newMessages) {
+        inboundMessageProducer.publish(msg);
+    }
+}
+```
+Problems: 5+ second latency, bad UX, wasteful API calls, doesn't scale.
+
+**Webhook implementation in code:**
+
+```java
+@GetMapping("/webhook")
+public ResponseEntity<String> verifyWebhook(
+        @RequestParam("hub.challenge") String challenge,
+        @RequestParam("hub.verify_token") String verifyToken) {
+    if ("local-verify-token".equals(verifyToken)) {
+        return ResponseEntity.ok(challenge);  // Echo back challenge
+    }
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Verification failed");
+}
+
+@PostMapping("/webhook")
+public ResponseEntity<Map<String, Object>> handleWebhook(@Valid @RequestBody WebhookRequest request) {
+    WhatsAppMessage message = inboundMessageService.normalize(request);
+    
+    // Deduplicate: webhooks may retry on network failure
+    if (!idempotencyService.claim(message.messageId())) {
+        return ResponseEntity.accepted().body(Map.of("status", "duplicate"));
+    }
+    
+    // Publish to Kafka for async processing
+    inboundMessageProducer.publish(new WhatsAppMessageEvent(...));
+    
+    // Return 202 immediately (don't wait for AI response)
+    return ResponseEntity.accepted().body(Map.of("status", "accepted"));
+}
+```
+
+**Key webhook concepts:**
+
+- **Idempotency**: Webhooks may be delivered multiple times. Store messageId in Redis/database to detect duplicates.
+- **Async processing**: Return 202 Accepted immediately. Process the message in background via Kafka consumer.
+- **Security**: Verify webhook signature via `X-Hub-Signature` header to prevent spoofing.
+- **Retry logic**: If your endpoint returns error, WhatsApp retries with exponential backoff.
+
+**Other alternatives considered:**
+
+- **Long Polling**: Better latency than polling, but still not true real-time; requires persistent connections
+- **WebSockets**: True bidirectional, but WhatsApp doesn't support; overkill for this use case
+- **Message Queue**: Could have WhatsApp write to SQS/RabbitMQ, but no native WhatsApp support
+- **Server-Sent Events**: Real-time push, but one-way only; WhatsApp doesn't support it
+
 ### How the design satisfies functional requirements
 
 Functional requirements:
